@@ -10,7 +10,45 @@ services:
             POSTGRES_PASSWORD: ${PLANNER_DB_PASSWORD}
         volumes:
             - postgres_db:/var/lib/postgresql/data
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U postgres"]
+            interval: 5s
+            timeout: 5s
+            retries: 5
+        networks:
+            - planner_net
+
+    app:
+        build: .
+        ports:
+            - 8080:8080
+        depends_on:
+            db:
+                condition: service_healthy
+        networks:
+            - planner_net
+
+    pgadmin:
+        image: dpage/pgadmin4:latest
+        restart: unless-stopped
+        depends_on:
+            db:
+                condition: service_healthy
+        environment:
+            PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@admin.com}
+            PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-password}
+        ports:
+            - 8081:80
+        volumes:
+            - pgadmin:/var/lib/pgadmin
+        networks:
+            - planner_net
 
 volumes:
     postgres_db:
         driver: local
+    pgadmin:
+        driver: local
+
+networks:
+    planner_net:
