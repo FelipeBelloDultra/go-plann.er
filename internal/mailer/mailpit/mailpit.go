@@ -30,6 +30,43 @@ func NewMailpit(pool *pgxpool.Pool) Mailpit {
 	}
 }
 
+func (mp Mailpit) SendConfirmTripEmailToTripParticipant(participant ParticipantToSendEmail, tripID uuid.UUID) error {
+	ctx := context.Background()
+	trip, err := mp.store.GetTrip(ctx, tripID)
+	if err != nil {
+		return fmt.Errorf("mailpit: failed to get trip for SendConfirmTripEmailToTripParticipant: %w", err)
+	}
+
+	msg := mail.NewMsg()
+	if err := msg.From("mailpit@plann.er"); err != nil {
+		return fmt.Errorf("mailpit: failed to set From in email SendConfirmTripEmailToTripParticipant: %w", err)
+	}
+
+	if err := msg.To(participant.Email); err != nil {
+		return fmt.Errorf("mailpit: failed to set To in email SendConfirmTripEmailToTripParticipant: %w", err)
+	}
+
+	msg.Subject("Confirm your trip")
+	msg.SetBodyString(mail.TypeTextPlain, fmt.Sprintf(`
+        Hello, %s!
+        Your trip to %s starting on %s needs to be confirmed.
+        Click the button below to confirm.
+        `,
+		participant.Name, trip.Destination, trip.StartsAt.Time.Format(time.DateOnly),
+	))
+
+	client, err := mail.NewClient("mailpit", mail.WithTLSPortPolicy(mail.NoTLS), mail.WithPort(1025))
+	if err != nil {
+		return fmt.Errorf("mailpit: failed create email client SendConfirmTripEmailToTripParticipant: %w", err)
+	}
+
+	if err := client.DialAndSend(msg); err != nil {
+		return fmt.Errorf("mailpit: failed send email client SendConfirmTripEmailToTripParticipant: %w", err)
+	}
+
+	return nil
+}
+
 func (mp Mailpit) SendConfirmTripEmailToTripParticipants(participants []ParticipantToSendEmail, tripID uuid.UUID) error {
 	ctx := context.Background()
 	trip, err := mp.store.GetTrip(ctx, tripID)
@@ -58,11 +95,11 @@ func (mp Mailpit) SendConfirmTripEmailToTripParticipants(participants []Particip
 
 		client, err := mail.NewClient("mailpit", mail.WithTLSPortPolicy(mail.NoTLS), mail.WithPort(1025))
 		if err != nil {
-			return fmt.Errorf("mailpit: failed create email client SendConfirmTripEmailToTripOwner: %w", err)
+			return fmt.Errorf("mailpit: failed create email client SendConfirmTripEmailToTripParticipants: %w", err)
 		}
 
 		if err := client.DialAndSend(msg); err != nil {
-			return fmt.Errorf("mailpit: failed send email client SendConfirmTripEmailToTripOwner: %w", err)
+			return fmt.Errorf("mailpit: failed send email client SendConfirmTripEmailToTripParticipants: %w", err)
 		}
 	}
 
@@ -73,16 +110,16 @@ func (mp Mailpit) SendConfirmTripEmailToTripOwner(tripID uuid.UUID) error {
 	ctx := context.Background()
 	trip, err := mp.store.GetTrip(ctx, tripID)
 	if err != nil {
-		return fmt.Errorf("mailpit: failed to get trip for SendConfirmTripEmailToTripOwnerL: %w", err)
+		return fmt.Errorf("mailpit: failed to get trip for SendConfirmTripEmailToTripOwner: %w", err)
 	}
 
 	msg := mail.NewMsg()
 	if err := msg.From("mailpit@plann.er"); err != nil {
-		return fmt.Errorf("mailpit: failed to set From in email SendConfirmTripEmailToTripOwnerL: %w", err)
+		return fmt.Errorf("mailpit: failed to set From in email SendConfirmTripEmailToTripOwner: %w", err)
 	}
 
 	if err := msg.To(trip.OwnerEmail); err != nil {
-		return fmt.Errorf("mailpit: failed to set To in email SendConfirmTripEmailToTripOwnerL: %w", err)
+		return fmt.Errorf("mailpit: failed to set To in email SendConfirmTripEmailToTripOwner: %w", err)
 	}
 
 	msg.Subject("Confirm your trip")

@@ -31,11 +31,13 @@ type store interface {
 	GetTripLinks(ctx context.Context, tripID uuid.UUID) ([]pgstore.Link, error)
 	CreateTripLink(ctx context.Context, arg pgstore.CreateTripLinkParams) (uuid.UUID, error)
 	GetParticipants(ctx context.Context, tripID uuid.UUID) ([]pgstore.Participant, error)
+	InviteParticipantsToTrip(ctx context.Context, arg []pgstore.InviteParticipantsToTripParams) (int64, error)
 }
 
 type Mailer interface {
 	SendConfirmTripEmailToTripOwner(tripID uuid.UUID) error
 	SendConfirmTripEmailToTripParticipants(participants []mailpit.ParticipantToSendEmail, tripID uuid.UUID) error
+	SendConfirmTripEmailToTripParticipant(participant mailpit.ParticipantToSendEmail, tripID uuid.UUID) error
 }
 
 type API struct {
@@ -340,7 +342,58 @@ func (api API) GetTripsTripIDConfirm(w http.ResponseWriter, r *http.Request, tri
 // Invite someone to the trip.
 // (POST /trips/{tripId}/invites)
 func (api API) PostTripsTripIDInvites(w http.ResponseWriter, r *http.Request, tripID string) *spec.Response {
-	panic("not implemented") // TODO: Implement
+	var body spec.InviteParticipantRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		return spec.PostTripsTripIDInvitesJSON400Response(spec.Error{Message: "invalid json"})
+	}
+
+	if err := api.validator.Struct(body); err != nil {
+		return spec.PostTripsTripIDInvitesJSON400Response(spec.Error{Message: "invalid input: " + err.Error()})
+	}
+
+	id, err := uuid.Parse(tripID)
+	if err != nil {
+		return spec.PostTripsTripIDInvitesJSON400Response(spec.Error{Message: "invalid UUID"})
+	}
+
+	if _, err = api.store.GetTrip(r.Context(), id); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return spec.PostTripsTripIDInvitesJSON400Response(spec.Error{Message: "trip not found"})
+		}
+
+		api.logger.Error("failed to get trip links", zap.Error(err), zap.String("trip_id", tripID))
+		return spec.PostTripsTripIDInvitesJSON400Response(spec.Error{
+			Message: "something went wrong, try again",
+		})
+	}
+
+	var participantTrip []pgstore.InviteParticipantsToTripParams
+	participantTrip = append(participantTrip, pgstore.InviteParticipantsToTripParams{
+		TripID: id,
+		Email:  string(body.Email),
+	})
+
+	if _, err := api.store.InviteParticipantsToTrip(r.Context(), participantTrip); err != nil {
+		api.logger.Error("failed to invite participants to trip", zap.Error(err), zap.String("trip_id", tripID))
+		return spec.PostTripsTripIDInvitesJSON400Response(spec.Error{
+			Message: "something went wrong, try again",
+		})
+	}
+
+	go func() {
+		if err := api.mailer.SendConfirmTripEmailToTripParticipant(mailpit.ParticipantToSendEmail{
+			Name:  string(body.Email[:strings.LastIndex(string(body.Email), "@")]),
+			Email: string(body.Email),
+		}, id); err != nil {
+			api.logger.Error(
+				"failed to send invite email to participant on SendConfirmTripEmailToTripParticipant",
+				zap.Error(err),
+				zap.String("trip_id", id.String()),
+			)
+		}
+	}()
+
+	return spec.PostTripsTripIDInvitesJSON201Response(nil)
 }
 
 // Get a trip links.
