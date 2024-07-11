@@ -26,6 +26,7 @@ type store interface {
 	GetTripActivities(ctx context.Context, tripID uuid.UUID) ([]pgstore.Activity, error)
 	CreateActivity(ctx context.Context, arg pgstore.CreateActivityParams) (uuid.UUID, error)
 	GetTripLinks(ctx context.Context, tripID uuid.UUID) ([]pgstore.Link, error)
+	CreateTripLink(ctx context.Context, arg pgstore.CreateTripLinkParams) (uuid.UUID, error)
 }
 
 type Mailer interface {
@@ -337,7 +338,46 @@ func (api API) GetTripsTripIDLinks(w http.ResponseWriter, r *http.Request, tripI
 // Create a trip link.
 // (POST /trips/{tripId}/links)
 func (api API) PostTripsTripIDLinks(w http.ResponseWriter, r *http.Request, tripID string) *spec.Response {
-	panic("not implemented") // TODO: Implement
+	var body spec.CreateLinkRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		return spec.PostTripsTripIDLinksJSON400Response(spec.Error{Message: "invalid json"})
+	}
+
+	if err := api.validator.Struct(body); err != nil {
+		return spec.PostTripsTripIDLinksJSON400Response(spec.Error{Message: "invalid inputs: " + err.Error()})
+	}
+
+	id, err := uuid.Parse(tripID)
+	if err != nil {
+		return spec.PostTripsTripIDLinksJSON400Response(spec.Error{Message: "invalid UUID"})
+	}
+
+	if _, err = api.store.GetTrip(r.Context(), id); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return spec.PostTripsTripIDLinksJSON400Response(spec.Error{Message: "trip not found"})
+		}
+
+		api.logger.Error("failed to get trip links", zap.Error(err), zap.String("trip_id", tripID))
+		return spec.PostTripsTripIDLinksJSON400Response(spec.Error{
+			Message: "something went wrong, try again",
+		})
+	}
+
+	linkID, err := api.store.CreateTripLink(r.Context(), pgstore.CreateTripLinkParams{
+		TripID: id,
+		Title:  body.Title,
+		Url:    body.URL,
+	})
+	if err != nil {
+		api.logger.Error("failed to create trip link", zap.Error(err), zap.String("trip_id", tripID))
+		return spec.PostTripsTripIDLinksJSON400Response(spec.Error{
+			Message: "something went wrong, try again",
+		})
+	}
+
+	return spec.PostTripsTripIDLinksJSON201Response(spec.CreateLinkResponse{
+		LinkID: linkID.String(),
+	})
 }
 
 // Get a trip participants.
