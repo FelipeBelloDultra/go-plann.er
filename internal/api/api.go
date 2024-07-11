@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
@@ -22,6 +23,7 @@ type store interface {
 	GetTrip(ctx context.Context, id uuid.UUID) (pgstore.Trip, error)
 	ConfirmParticipant(ctx context.Context, participantID uuid.UUID) error
 	UpdateTrip(ctx context.Context, arg pgstore.UpdateTripParams) error
+	GetTripActivities(ctx context.Context, tripID uuid.UUID) ([]pgstore.Activity, error)
 }
 
 type Mailer interface {
@@ -186,7 +188,50 @@ func (api API) PutTripsTripID(w http.ResponseWriter, r *http.Request, tripID str
 // Get a trip activities.
 // (GET /trips/{tripId}/activities)
 func (api API) GetTripsTripIDActivities(w http.ResponseWriter, r *http.Request, tripID string) *spec.Response {
-	panic("not implemented") // TODO: Implement
+	id, err := uuid.Parse(tripID)
+	if err != nil {
+		return spec.GetTripsTripIDActivitiesJSON400Response(spec.Error{Message: "invalid UUID"})
+	}
+
+	if _, err := api.store.GetTrip(r.Context(), id); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return spec.GetTripsTripIDActivitiesJSON400Response(spec.Error{Message: "trip not found"})
+		}
+
+		api.logger.Error("failed to get trips", zap.Error(err), zap.String("trip_id", tripID))
+		return spec.GetTripsTripIDActivitiesJSON400Response(spec.Error{
+			Message: "something went wrong, try again",
+		})
+	}
+
+	activities, err := api.store.GetTripActivities(r.Context(), id)
+	if err != nil {
+		api.logger.Error("failed to get trips activities", zap.Error(err), zap.String("trip_id", tripID))
+		return spec.GetTripsTripIDActivitiesJSON400Response(spec.Error{
+			Message: "something went wrong, try again",
+		})
+	}
+
+	activityMap := make(map[string][]spec.GetTripActivitiesResponseInnerArray)
+	for _, activity := range activities {
+		date := activity.OccursAt.Time.Format(time.DateOnly)
+		activityMap[date] = append(activityMap[date], spec.GetTripActivitiesResponseInnerArray{
+			ID:       activity.ID.String(),
+			OccursAt: activity.OccursAt.Time,
+			Title:    activity.Title,
+		})
+	}
+
+	var response spec.GetTripActivitiesResponse
+	for date, activities := range activityMap {
+		parsedDate, _ := time.Parse(time.DateOnly, date)
+		response.Activities = append(response.Activities, spec.GetTripActivitiesResponseOuterArray{
+			Date:       parsedDate,
+			Activities: activities,
+		})
+	}
+
+	return spec.GetTripsTripIDActivitiesJSON200Response(response)
 }
 
 // Create a trip activity.
